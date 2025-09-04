@@ -1,140 +1,201 @@
 import pandas as pd
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, ConfusionMatrixDisplay
 from sklearn.base import BaseEstimator, TransformerMixin
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
 import logging
-import numpy as np
-from typing import Optional
+from pathlib import Path
+import joblib
+import matplotlib.pyplot as plt
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
+# Custom transformer to integrate data preprocessing into the sklearn Pipeline.
 class DrugDataPreprocessor(BaseEstimator, TransformerMixin):
-    """
-    A scikit-learn compatible class to handle data loading and preprocessing
-    for the Drug Consumption dataset.
-    This includes handling categorical variables and preparing features for modeling.
-    """
-
-    def __init__(self, file_path: str):
-        self.file_path = file_path
-        self.df = None
-        # We will now encode both 'Ethnicity' and 'Country'
-        self.categorical_features = ['Ethnicity', 'Country']
-        self.encoder = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
+    def __init__(self):
         self.drug_columns = [
-            'Alcohol', 'Amphet', 'Amyl', 'Benzos', 'Caff', 'Cannabis', 'Choc',
-            'Coke', 'Crack', 'Ecstasy', 'Heroin', 'Ketamine', 'Legalh', 'LSD',
-            'Meth', 'Mushrooms', 'Nicotine', 'Semer', 'VSA'
+            'Alcohol', 'Amphet', 'Amyl', 'Benzos', 'Caff', 'Cannabis', 'Choc', 'Coke', 'Crack',
+            'Ecstasy', 'Heroin', 'Ketamine', 'Legalh', 'LSD', 'Meth', 'Mushrooms', 'Nicotine',
+            'Semer', 'VSA'
         ]
+        self.categorical_features = ['Country', 'Ethnicity']
+        self.learned_features = None
 
-    def load_data(self) -> None:
+    def fit(self, X, y=None):
         """
-        Loads the raw CSV data into a pandas DataFrame.
+        Learn the feature names (columns) after one-hot encoding on the training data.
         """
-        try:
-            self.df = pd.read_csv(self.file_path)
-            logging.info("Data loaded successfully.")
-            if 'ID' in self.df.columns:
-                self.df.set_index('ID', inplace=True)
-        except FileNotFoundError:
-            logging.error(f"Error: File not found at {self.file_path}")
-            self.df = None
-
-    def fit(self, X: pd.DataFrame, y=None) -> 'DrugDataPreprocessor':
-        """
-        Fits the preprocessor on the data to learn categorical encodings.
-        """
-        if X is None or X.empty:
-            logging.warning("Input DataFrame is empty or None. Cannot fit.")
-            return self
-
-        # Fit the OneHotEncoder on the specified categorical columns
-        categorical_data = X[self.categorical_features]
-        self.encoder.fit(categorical_data)
+        temp_df = self._preprocess_step(X)
+        self.learned_features = temp_df.columns.tolist()
         return self
 
-    def transform(self, X: pd.DataFrame) -> Optional[pd.DataFrame]:
+    def transform(self, X):
         """
-        Transforms the data by handling categorical variables and dropping drug columns.
+        Apply the preprocessing steps and ensure all columns match the learned features.
         """
-        if X is None or X.empty:
-            logging.warning("Input DataFrame is empty or None. Cannot transform.")
-            return None
+        df = self._preprocess_step(X.copy())
 
-        # Make a copy to avoid modifying the original DataFrame
-        df_copy = X.copy()
+        # Reindex to ensure all columns from the training set are present,
+        # filling missing columns with 0.
+        df = df.reindex(columns=self.learned_features, fill_value=0)
 
-        # Handle 'Age' and 'Education' with label encoding
-        age_map = {
-            '18-24': 0, '25-34': 1, '35-44': 2,
-            '45-54': 3, '55-64': 4, '65+': 5
+        return df
+
+    def _preprocess_step(self, df):
+        """
+        Helper method to perform the core preprocessing steps.
+        """
+        # Mapping 'Gender' to numerical values and filling missing values
+        gender_map = {'F': 0, 'M': 1}
+        df['Gender'] = df['Gender'].map(gender_map).fillna(-1)
+
+        # Mapping 'Education' to numerical values and handling unexpected values
+        education_map = {
+            'Left school before 16 years': 1, 'Left school at 16 years': 2,
+            'Left school at 17 years': 3, 'Left school at 18 years': 4,
+            'Some college or university, no certificate or degree': 5,
+            'Professional certificate/diploma': 6,
+            'University degree': 7, 'Masters degree': 8, 'Doctorate degree': 9
         }
-        df_copy['Age'] = df_copy['Age'].map(age_map).fillna(-1)
+        df['Education'] = df['Education'].map(education_map).fillna(-1)
 
-        edu_map = {
-            'Left school at 16': 0, 'Left school at 17': 1, 'Left school at 18': 2,
-            'Some college or university, no degree': 3, 'Professional Certificate/ Diploma': 4,
-            'University Degree': 5, 'Masters Degree': 6, 'Doctorate Degree': 7
-        }
-        df_copy['Education'] = df_copy['Education'].map(edu_map).fillna(-1)
+        # One-hot encoding for categorical features
+        df = pd.get_dummies(df, columns=self.categorical_features, drop_first=True)
 
-        # Handle 'Gender' with mapping and NaN fill
-        gender_map = {'Male': 0, 'Female': 1}
-        df_copy['Gender'] = df_copy['Gender'].map(gender_map).fillna(-1)
+        # Drop irrelevant columns
+        irrelevant_columns = ['ID', 'Age'] + self.drug_columns
+        df = df.drop(columns=[col for col in irrelevant_columns if col in df.columns], errors='ignore')
 
-        # Apply One-Hot Encoding for specified categorical features
-        try:
-            encoded_features = self.encoder.transform(df_copy[self.categorical_features])
-            encoded_df = pd.DataFrame(encoded_features,
-                                      columns=self.encoder.get_feature_names_out(self.categorical_features),
-                                      index=df_copy.index)
-            df_copy = pd.concat([df_copy.drop(columns=self.categorical_features), encoded_df], axis=1)
-        except Exception as e:
-            logging.error(f"Error during OneHotEncoding: {e}")
-            return None
+        # Ensure all feature columns are numeric
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-        # Drop drug columns to prepare feature set
-        try:
-            features_df = df_copy.drop(columns=self.drug_columns)
-        except KeyError as e:
-            logging.error(f"Failed to drop drug columns. Check if all drug columns are present: {e}")
-            return None
+        # Final check to fill any remaining NaN values before returning
+        df = df.fillna(0)
 
-        logging.info("Features preprocessed successfully.")
-        return features_df
-
-    def get_processed_data(self) -> Optional[pd.DataFrame]:
-        """
-        Returns the preprocessed DataFrame.
-        """
-        return self.df.copy() if self.df is not None else None
+        return df
 
 
-def prepare_target_variable(df: pd.DataFrame, drug_name: str, is_binary: bool = True) -> Optional[pd.DataFrame]:
+def prepare_target_variable(df, target_drug, is_binary=True):
     """
-    Prepares a specific drug column as a target variable, either binary or multi-class.
-
-    Args:
-        df (pd.DataFrame): The DataFrame containing the drug consumption data.
-        drug_name (str): The name of the drug column (e.g., 'Alcohol', 'Coke').
-        is_binary (bool): If True, converts the target to binary (user/non-user).
-                         If False, keeps the original multi-class labels.
-
-    Returns:
-        pd.DataFrame: A DataFrame with the specified target column converted.
+    Prepares the target variable for a specific drug.
     """
-    df_copy = df.copy()
-    if drug_name not in df_copy.columns:
-        logging.error(f"Drug column '{drug_name}' not found in the DataFrame.")
+    if target_drug not in df.columns:
+        logging.error(f"Target drug '{target_drug}' not found in data.")
         return None
 
-    if is_binary:
-        # Assuming 'CL0' is the non-user group, and all others are users.
-        df_copy[drug_name] = df_copy[drug_name].apply(lambda x: 0 if x == 'CL0' else 1)
-    # If not binary, we'll assume a multi-class mapping is desired.
-    else:
-        multi_class_map = {'CL0': 0, 'CL1': 1, 'CL2': 2, 'CL3': 3, 'CL4': 4, 'CL5': 5, 'CL6': 6}
-        df_copy[drug_name] = df_copy[drug_name].map(multi_class_map).fillna(-1)
+    target_df = df[[target_drug]].copy()
 
-    logging.info(f"Target variable for '{drug_name}' prepared successfully.")
-    return df_copy
+    if is_binary:
+        # Binary classification for 'CL0', 'CL1' vs 'CL2', 'CL3', 'CL4', 'CL5', 'CL6'
+        target_df[target_drug] = target_df[target_drug].apply(lambda x: 0 if x in ['CL0', 'CL1'] else 1)
+
+    return target_df
+
+
+def main():
+    """
+    Main function to orchestrate the data preprocessing, model training,
+    and evaluation workflow with hyperparameter tuning and model saving.
+    """
+    logging.basicConfig(level=logging.INFO)
+    logging.info("Starting the drug consumption prediction project.")
+
+    # 1. Load the data
+    project_root = Path(__file__).parent.parent
+    file_path = project_root / "data" / "Drug_Consumption.csv"
+
+    try:
+        df = pd.read_csv(file_path)
+        logging.info("Data loaded successfully.")
+    except FileNotFoundError:
+        logging.error(f"File not found at {file_path}. Exiting.")
+        return
+
+    # 2. Prepare the target variable
+    target_df = prepare_target_variable(df.copy(), 'Cannabis', is_binary=True)
+    if target_df is None:
+        logging.error("Target variable preparation failed. Exiting.")
+        return
+
+    features = df.drop(columns=target_df.columns, errors='ignore')
+    target = target_df['Cannabis']
+
+    # 3. Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(
+        features, target, test_size=0.2, random_state=42, stratify=target
+    )
+    logging.info("Data split into training and testing sets.")
+
+    # 4. Create a pipeline with the preprocessor, SMOTE, and the classifier
+    logging.info("Creating a pipeline for hyperparameter tuning...")
+    pipeline = Pipeline([
+        ('preprocessor', DrugDataPreprocessor()),
+        ('smote', SMOTE(random_state=42)),
+        ('classifier', RandomForestClassifier(random_state=42))
+    ])
+
+    # 5. Define the parameter grid for the GridSearchCV
+    param_grid = {
+        'classifier__n_estimators': [50, 100, 200],
+        'classifier__max_depth': [5, 10, None],
+        'classifier__min_samples_split': [2, 5],
+        'classifier__min_samples_leaf': [1, 2],
+    }
+
+    # 6. Perform a grid search to find the best parameters
+    logging.info("Performing GridSearchCV to find the best model...")
+    grid_search = GridSearchCV(
+        pipeline,
+        param_grid,
+        cv=5,
+        scoring='f1',
+        n_jobs=-1,
+        verbose=1
+    )
+    grid_search.fit(X_train, y_train)
+    logging.info("Grid search completed.")
+
+    # 7. Get the best model and evaluate its performance
+    best_model = grid_search.best_estimator_
+
+    logging.info(f"Best parameters found: {grid_search.best_params_}")
+
+    predictions = best_model.predict(X_test)
+    accuracy = best_model.score(X_test, y_test)
+
+    logging.info(f"Model Accuracy on the test set: {accuracy:.2f}")
+
+    # Display the full classification report
+    print("\nDetailed Classification Report:")
+    print(classification_report(y_test, predictions))
+
+    # 8. Visualize the Confusion Matrix
+    print("\nConfusion Matrix:")
+    disp = ConfusionMatrixDisplay.from_predictions(y_test, predictions, cmap=plt.cm.Blues)
+    plt.show()
+
+    # 9. Save the best model for later use
+    model_path = project_root / "cannabis_model.pkl"
+    joblib.dump(best_model, model_path)
+    logging.info(f"Best model saved to {model_path}")
+
+    # 10. Analyze Feature Importance
+    # Get feature importances from the classifier step of the best pipeline
+    model = best_model.named_steps['classifier']
+    preprocessor = best_model.named_steps['preprocessor']
+
+    # Note: Feature importance is from the classifier's perspective,
+    # so we need to get the feature names after preprocessing.
+    preprocessed_features = preprocessor.transform(features)
+    feature_importances = pd.Series(model.feature_importances_, index=preprocessed_features.columns)
+    sorted_importances = feature_importances.sort_values(ascending=False)
+
+    print("\nTop 5 Most Important Features for Cannabis Prediction:")
+    print(sorted_importances.head())
+
+
+if __name__ == "__main__":
+    main()
