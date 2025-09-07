@@ -18,9 +18,9 @@ def main():
     """
     parser = argparse.ArgumentParser(description='Drug Consumption Prediction')
     parser.add_argument('--mode', choices=['train', 'inference'], default='train',
-                        help='Mode to run: train or inference (default: train)')
+                       help='Mode to run: train or inference (default: train)')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-                        default='INFO', help='Logging level (default: INFO)')
+                       default='INFO', help='Logging level (default: INFO)')
 
     args = parser.parse_args()
 

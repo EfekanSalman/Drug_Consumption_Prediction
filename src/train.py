@@ -1,19 +1,106 @@
 """
-Training workflow for drug consumption prediction models.
+Training workflow for drug consumption prediction models with MLflow integration.
 """
 
 import pandas as pd
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, ConfusionMatrixDisplay, accuracy_score
+from sklearn.metrics import classification_report, ConfusionMatrixDisplay, accuracy_score, f1_score, precision_score, recall_score
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 import matplotlib.pyplot as plt
 import logging
 from pathlib import Path
+import mlflow
+import mlflow.sklearn
+from datetime import datetime
 
 from preprocessing import DrugDataPreprocessor, prepare_target_variable
 from utils import load_data, get_data_path, setup_logging, save_model
+
+
+def setup_mlflow_experiment(experiment_name: str = "drug_consumption_prediction"):
+    """
+    Setup MLflow experiment for tracking.
+
+    Args:
+        experiment_name (str): Name of the MLflow experiment
+
+    Returns:
+        str: Experiment ID
+    """
+    try:
+        experiment = mlflow.get_experiment_by_name(experiment_name)
+        if experiment is None:
+            experiment_id = mlflow.create_experiment(experiment_name)
+            logging.info(f"Created new MLflow experiment: {experiment_name}")
+        else:
+            experiment_id = experiment.experiment_id
+            logging.info(f"Using existing MLflow experiment: {experiment_name}")
+
+        mlflow.set_experiment(experiment_name)
+        return experiment_id
+    except Exception as e:
+        logging.warning(f"MLflow setup failed: {e}. Continuing without MLflow tracking.")
+        return None
+
+
+def log_model_metrics(y_test, predictions, run_name: str = None):
+    """
+    Log model performance metrics to MLflow.
+
+    Args:
+        y_test: True target values
+        predictions: Model predictions
+        run_name (str, optional): Name for the MLflow run
+    """
+    try:
+        # Calculate metrics
+        accuracy = accuracy_score(y_test, predictions)
+        f1 = f1_score(y_test, predictions)
+        precision = precision_score(y_test, predictions)
+        recall = recall_score(y_test, predictions)
+
+        # Log metrics
+        mlflow.log_metric("accuracy", accuracy)
+        mlflow.log_metric("f1_score", f1)
+        mlflow.log_metric("precision", precision)
+        mlflow.log_metric("recall", recall)
+
+        logging.info(f"Logged metrics - Accuracy: {accuracy:.3f}, F1: {f1:.3f}, Precision: {precision:.3f}, Recall: {recall:.3f}")
+
+    except Exception as e:
+        logging.warning(f"Failed to log metrics: {e}")
+
+
+def log_hyperparameters(best_params: dict):
+    """
+    Log hyperparameters to MLflow.
+
+    Args:
+        best_params (dict): Best hyperparameters from GridSearchCV
+    """
+    try:
+        for param, value in best_params.items():
+            mlflow.log_param(param, value)
+        logging.info(f"Logged hyperparameters: {best_params}")
+    except Exception as e:
+        logging.warning(f"Failed to log hyperparameters: {e}")
+
+
+def log_model_artifact(model, model_name: str = "cannabis_model"):
+    """
+    Log model as MLflow artifact.
+
+    Args:
+        model: Trained model to log
+        model_name (str): Name for the model artifact
+    """
+    try:
+        mlflow.sklearn.log_model(model, model_name)
+        logging.info(f"Logged model artifact: {model_name}")
+    except Exception as e:
+        logging.warning(f"Failed to log model artifact: {e}")
 
 
 def create_pipeline():
@@ -102,8 +189,6 @@ def evaluate_model(model, X_test, y_test):
     # Visualize the Confusion Matrix
     print("\nConfusion Matrix:")
     disp = ConfusionMatrixDisplay.from_predictions(y_test, predictions, cmap=plt.cm.Blues)
-    # For the Linux
-    #plt.savefig("confusion_matrix.png")
     plt.show()
 
     return {
@@ -141,51 +226,99 @@ def analyze_feature_importance(model, features):
 
 def main():
     """
-    Main training workflow.
+    Main training workflow with MLflow integration.
+
+    Returns:
+        tuple: (best_model, evaluation_results, feature_importance)
     """
     setup_logging()
     logging.info("Starting the drug consumption prediction training.")
 
-    # 1. Load the data
-    file_path = get_data_path()
-    df = load_data(file_path)
+    # Setup MLflow experiment
+    experiment_id = setup_mlflow_experiment()
 
-    if df is None:
-        logging.error("Failed to load data. Exiting.")
-        return
+    # Start MLflow run
+    with mlflow.start_run(run_name=f"cannabis_prediction_{datetime.now().strftime('%Y%m%d_%H%M%S')}"):
+        try:
+            # Log run metadata
+            mlflow.log_param("target_drug", "Cannabis")
+            mlflow.log_param("test_size", 0.2)
+            mlflow.log_param("random_state", 42)
+            mlflow.log_param("cv_folds", 5)
 
-    # 2. Prepare the target variable
-    target_df = prepare_target_variable(df.copy(), 'Cannabis', is_binary=True)
-    if target_df is None:
-        logging.error("Target variable preparation failed. Exiting.")
-        return
+            # 1. Load the data
+            file_path = get_data_path()
+            df = load_data(file_path)
 
-    features = df.drop(columns=target_df.columns, errors='ignore')
-    target = target_df['Cannabis']
+            if df is None:
+                logging.error("Failed to load data. Exiting.")
+                return None, None, None
 
-    # 3. Split the data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        features, target, test_size=0.2, random_state=42, stratify=target
-    )
-    logging.info("Data split into training and testing sets.")
+            # Log dataset info
+            mlflow.log_param("dataset_size", len(df))
+            mlflow.log_param("num_features", len(df.columns))
 
-    # 4. Train the model
-    grid_search = train_model(X_train, y_train)
-    best_model = grid_search.best_estimator_
+            # 2. Prepare the target variable
+            target_df = prepare_target_variable(df.copy(), 'Cannabis', is_binary=True)
+            if target_df is None:
+                logging.error("Target variable preparation failed. Exiting.")
+                return None, None, None
 
-    logging.info(f"Best parameters found: {grid_search.best_params_}")
+            features = df.drop(columns=target_df.columns, errors='ignore')
+            target = target_df['Cannabis']
 
-    # 5. Evaluate the model
-    evaluation_results = evaluate_model(best_model, X_test, y_test)
+            # Log target distribution
+            target_dist = target.value_counts()
+            mlflow.log_param("target_class_0_count", int(target_dist.get(0, 0)))
+            mlflow.log_param("target_class_1_count", int(target_dist.get(1, 0)))
 
-    # 6. Analyze feature importance
-    feature_importance = analyze_feature_importance(best_model, features)
+            # 3. Split the data into training and testing sets
+            X_train, X_test, y_train, y_test = train_test_split(
+                features, target, test_size=0.2, random_state=42, stratify=target
+            )
+            logging.info("Data split into training and testing sets.")
 
-    # 7. Save the best model
-    model_path = get_data_path().parent / "cannabis_model.pkl"
-    save_model(best_model, str(model_path))
+            # 4. Train the model
+            grid_search = train_model(X_train, y_train)
+            best_model = grid_search.best_estimator_
 
-    return best_model, evaluation_results, feature_importance
+            logging.info(f"Best parameters found: {grid_search.best_params_}")
+
+            # Log hyperparameters
+            log_hyperparameters(grid_search.best_params_)
+
+            # 5. Evaluate the model
+            evaluation_results = evaluate_model(best_model, X_test, y_test)
+
+            # Log metrics to MLflow
+            log_model_metrics(y_test, evaluation_results['predictions'])
+
+            # 6. Analyze feature importance
+            feature_importance = analyze_feature_importance(best_model, features)
+
+            # Log top 5 feature importances
+            top_features = feature_importance.head(5)
+            for i, (feature, importance) in enumerate(top_features.items()):
+                mlflow.log_metric(f"feature_importance_{i+1}_{feature}", importance)
+
+            # 7. Save the best model
+            model_path = get_data_path().parent / "cannabis_model.pkl"
+            save_model(best_model, str(model_path))
+
+            # Log model artifact
+            log_model_artifact(best_model)
+
+            # Log model path
+            mlflow.log_param("model_save_path", str(model_path))
+
+            logging.info("Training completed successfully with MLflow tracking.")
+
+            return best_model, evaluation_results, feature_importance
+
+        except Exception as e:
+            logging.error(f"Training failed: {e}")
+            mlflow.log_param("error", str(e))
+            raise
 
 
 if __name__ == "__main__":
