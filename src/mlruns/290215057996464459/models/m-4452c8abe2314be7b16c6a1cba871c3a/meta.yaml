@@ -1,0 +1,10 @@
+artifact_location: file:///home/efekan/CursorProjects/Drug_Consumption_Prediction/src/mlruns/290215057996464459/models/m-4452c8abe2314be7b16c6a1cba871c3a/artifacts
+creation_timestamp: 1757271814257
+experiment_id: '290215057996464459'
+last_updated_timestamp: 1757271817124
+model_id: m-4452c8abe2314be7b16c6a1cba871c3a
+model_type: null
+name: cannabis_model
+source_run_id: 303ba5d213044b189458b11ad38e2855
+status: 2
+status_message: null

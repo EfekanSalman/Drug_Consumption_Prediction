@@ -1,0 +1,22 @@
+artifact_path: file:///home/efekan/CursorProjects/Drug_Consumption_Prediction/src/mlruns/290215057996464459/models/m-4452c8abe2314be7b16c6a1cba871c3a/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.12.3
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.7.1
+mlflow_version: 3.3.2
+model_id: m-4452c8abe2314be7b16c6a1cba871c3a
+model_size_bytes: 1692692
+model_uuid: m-4452c8abe2314be7b16c6a1cba871c3a
+prompts: null
+run_id: 303ba5d213044b189458b11ad38e2855
+utc_time_created: '2025-09-07 19:03:34.272170'

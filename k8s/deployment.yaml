@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: drug-consumption-prediction-api
+  labels:
+    app: drug-consumption-prediction-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: drug-consumption-prediction-api
+  template:
+    metadata:
+      labels:
+        app: drug-consumption-prediction-api
+    spec:
+      containers:
+      - name: api
+        image: drug-consumption-prediction:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MODEL_PATH
+          value: "/app/models/cannabis_model.pkl"
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PYTHONPATH
+          value: "/app"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+        - name: monitoring-storage
+          mountPath: /app/monitoring_data
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-pvc
+      - name: monitoring-storage
+        persistentVolumeClaim:
+          claimName: monitoring-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: drug-consumption-prediction-service
+spec:
+  selector:
+    app: drug-consumption-prediction-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: monitoring-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

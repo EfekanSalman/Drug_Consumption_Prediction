@@ -1,0 +1,14 @@
+artifact_uri: file:///home/efekan/CursorProjects/Drug_Consumption_Prediction/src/mlruns/290215057996464459/641042c276d644089defeb0b50628ab3/artifacts
+end_time: 1757318890588
+entry_point_name: ''
+experiment_id: '290215057996464459'
+lifecycle_stage: active
+run_id: 641042c276d644089defeb0b50628ab3
+run_name: cannabis_prediction_20250908_110753
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1757318873341
+status: 3
+tags: []
+user_id: efekan
