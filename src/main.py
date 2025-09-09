@@ -1,101 +1,41 @@
-import pandas as pd
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-from imblearn.over_sampling import SMOTE
-from imblearn.pipeline import Pipeline
+"""
+Main entry point for the drug consumption prediction project.
+This module provides a simple interface to run training or inference.
+"""
+
+import argparse
 import logging
 from pathlib import Path
 
-from preprocessing import DrugDataPreprocessor, prepare_target_variable
+from train import main as train_main
+from inference import main as inference_main
+from utils import setup_logging
+
 
 def main():
     """
-    Main function to orchestrate the data preprocessing, model training,
-    and evaluation workflow for predicting Cannabis use with hyperparameter tuning.
+    Main entry point with command line interface.
     """
-    logging.info("Starting the drug consumption prediction project.")
+    parser = argparse.ArgumentParser(description='Drug Consumption Prediction')
+    parser.add_argument('--mode', choices=['train', 'inference'], default='train',
+                       help='Mode to run: train or inference (default: train)')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                       default='INFO', help='Logging level (default: INFO)')
 
-    # 1. Initialize the preprocessor and load the data
-    # Create a robust path that works regardless of the current working directory.
-    project_root = Path(__file__).parent.parent
-    file_path = project_root / "data" / "Drug_Consumption.csv"
+    args = parser.parse_args()
 
-    preprocessor = DrugDataPreprocessor(file_path)
-    preprocessor.load_data()
+    # Setup logging
+    log_level = getattr(logging, args.log_level)
+    setup_logging(log_level)
 
-    if preprocessor.df is None:
-        logging.error("Data could not be loaded. Exiting.")
-        return
-
-    # 2. Preprocess features and prepare the target variable
-    preprocessor.fit(preprocessor.df)
-    features_df = preprocessor.transform(preprocessor.df)
-    # Use a copy of the original DataFrame to prepare the target variable.
-    target_df = prepare_target_variable(preprocessor.df.copy(), 'Cannabis', is_binary=True)
-
-    if features_df is None or target_df is None:
-        logging.error("Data preprocessing failed. Exiting.")
-        return
-
-    # Align features and target to ensure they have the same indices
-    features = features_df
-    target = target_df['Cannabis']
-
-    # 3. Split the data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        features, target, test_size=0.2, random_state=42, stratify=target
-    )
-    logging.info("Data split into training and testing sets.")
-
-    # 4. Create a pipeline with SMOTE and the classifier
-    logging.info("Creating a pipeline for hyperparameter tuning...")
-    pipeline = Pipeline([
-        ('smote', SMOTE(random_state=42)),
-        ('classifier', RandomForestClassifier(random_state=42))
-    ])
-
-    # 5. Define the parameter grid for the GridSearchCV
-    param_grid = {
-        'classifier__n_estimators': [50, 100, 200],
-        'classifier__max_depth': [5, 10, None],
-        'classifier__min_samples_split': [2, 5],
-        'classifier__min_samples_leaf': [1, 2],
-    }
-
-    # 6. Perform a grid search to find the best parameters
-    logging.info("Performing GridSearchCV to find the best model...")
-    grid_search = GridSearchCV(
-        pipeline,
-        param_grid,
-        cv=5,
-        scoring='f1',
-        n_jobs=-1,
-        verbose=1,
-    )
-    grid_search.fit(X_train, y_train)
-    logging.info("Grid search completed.")
-
-    # 7. Get the best model and evaluate its performance
-    best_model = grid_search.best_estimator_
-
-    logging.info(f"Best parameters found: {grid_search.best_params_}")
-
-    predictions = best_model.predict(X_test)
-    accuracy = accuracy_score(y_test, predictions)
-    logging.info(f"Model Accuracy on the test set: {accuracy:.2f}")
-
-    # Display the full classification report
-    print("\nDetailed Classification Report:")
-    print(classification_report(y_test, predictions))
-
-    # 8. Analyze Feature Importance
-    model = best_model.named_steps['classifier']
-    feature_importances = pd.Series(model.feature_importances_, index=features.columns)
-    sorted_importances = feature_importances.sort_values(ascending=False)
-
-    print("\nTop 5 Most Important Features for Cannabis Prediction:")
-    print(sorted_importances.head())
+    if args.mode == 'train':
+        logging.info("Starting training mode...")
+        train_main()
+    elif args.mode == 'inference':
+        logging.info("Starting inference mode...")
+        inference_main()
+    else:
+        logging.error(f"Unknown mode: {args.mode}")
 
 
 if __name__ == "__main__":
